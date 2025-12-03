@@ -1001,41 +1001,41 @@ int main(int argc, char *argv[]) {
     cout << final_Cb << endl;
 
 
-   cout << "\n=== Final MO energies (eV) ===\n";
+   cout << "\n Final MO energies (eV) \n";
 
     cout << "Alpha (Ea):\n";
-    cout << final_Ea.t();  // transpose so they print as a row
+    cout << final_Ea.t();  //transpose so they print as a row
 
     cout << "Beta  (Eb):\n";
     cout << final_Eb.t() << endl;
 
 
-        // === HOMO/LUMO and band gap (Task 1) ===
-    // num_alpha, num_beta, and num_basis are already defined earlier in main.
+    //HOMO/LUMO and band gap (
 
     if (num_alpha <= 0 || num_beta <= 0 ||
         num_alpha >= num_basis || num_beta >= num_basis) {
         cerr << "Cannot define HOMO/LUMO: check num_alpha/num_beta vs num_basis." << endl;
-    } else {
+    } 
+    else {
         int homo_alpha_idx = num_alpha - 1;
         int lumo_alpha_idx = num_alpha;
-        int homo_beta_idx  = num_beta - 1;
-        int lumo_beta_idx  = num_beta;
+        int homo_beta_idx = num_beta - 1;
+        int lumo_beta_idx = num_beta;
 
         double homo_alpha_E = final_Ea(homo_alpha_idx);
         double lumo_alpha_E = final_Ea(lumo_alpha_idx);
-        double homo_beta_E  = final_Eb(homo_beta_idx);
-        double lumo_beta_E  = final_Eb(lumo_beta_idx);
+        double homo_beta_E = final_Eb(homo_beta_idx);
+        double lumo_beta_E = final_Eb(lumo_beta_idx);
 
         double homo_E = std::max(homo_alpha_E, homo_beta_E);
         double lumo_E = std::min(lumo_alpha_E, lumo_beta_E);
         double band_gap_eV = lumo_E - homo_E;
 
-        cout << "\n=== HOMO/LUMO energies (eV) ===\n";
+        cout << "\nHOMO/LUMO energies (eV) \n";
         cout << "HOMO_alpha (index " << homo_alpha_idx << "): " << homo_alpha_E << " eV\n";
         cout << "LUMO_alpha (index " << lumo_alpha_idx << "): " << lumo_alpha_E << " eV\n";
-        cout << "HOMO_beta  (index " << homo_beta_idx  << "): " << homo_beta_E  << " eV\n";
-        cout << "LUMO_beta  (index " << lumo_beta_idx  << "): " << lumo_beta_E  << " eV\n";
+        cout << "HOMO_beta  (index " << homo_beta_idx << "): " << homo_beta_E << " eV\n";
+        cout << "LUMO_beta  (index " << lumo_beta_idx << "): " << lumo_beta_E << " eV\n";
         cout << "Overall HOMO: " << homo_E << " eV\n";
         cout << "Overall LUMO: " << lumo_E << " eV\n";
         cout << "HOMO-LUMO gap: " << band_gap_eV << " eV\n\n";
