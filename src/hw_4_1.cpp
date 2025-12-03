@@ -40,6 +40,13 @@ struct Primitive {
     double d; //coeff for s
 };
 
+// adding a struct for the dipole integral results
+struct DipoleIntegralResult {
+    arma::mat Dx;
+    arma::mat Dy;
+    arma::mat Dz;
+};
+
 using BasisSet = std::vector<Primitive>;
 
 std::map<std::string, BasisSet> sto3g_s = {
@@ -504,6 +511,87 @@ mat make_core_hamiltonian(const mat& overlap_matrix, const std::vector<Basis_com
     }
 
     return core_ham;
+}
+
+// function to build dipole integrals
+// okay so bc calc overlap is defined in main, I cna't access it here so I have to pass it in as a lambda
+// i think?
+template<typename OverlapFunc>
+void build_dipole_integrals(const vector<Basis_components>& basis_functions, int num_basis, 
+                            DipoleIntegralResult& result, OverlapFunc calc_overlap) {
+    // Allocate Dx, Dy, Dz
+    result.Dx = mat(num_basis, num_basis, fill::zeros);
+    result.Dy = mat(num_basis, num_basis, fill::zeros);
+    result.Dz = mat(num_basis, num_basis, fill::zeros);
+
+    // Loop over mu, nu
+    for (int mu = 0; mu < num_basis; mu++){
+        for (int nu = 0; nu < num_basis; nu++) {
+            
+            double sum_x = 0.0;
+            double sum_y = 0.0;
+            double sum_z = 0.0;
+            
+            // For each primitive pair compute
+            for (int k = 0; k < 3; k++) {  // 3 primitives in STO-3G
+                for (int l = 0; l < 3; l++) {
+                    // Get primitive parameters
+                    double x1 = basis_functions[mu].center(0);
+                    double y1 = basis_functions[mu].center(1);
+                    double z1 = basis_functions[mu].center(2);
+                    
+                    double x2 = basis_functions[nu].center(0);
+                    double y2 = basis_functions[nu].center(1);
+                    double z2 = basis_functions[nu].center(2);
+                    
+                    double exp1 = basis_functions[mu].exponents[k];
+                    double exp2 = basis_functions[nu].exponents[l];
+                    
+                    int power_x1 = basis_functions[mu].l;
+                    int power_y1 = basis_functions[mu].m;
+                    int power_z1 = basis_functions[mu].n;
+                    
+                    int power_x2 = basis_functions[nu].l;
+                    int power_y2 = basis_functions[nu].m;
+                    int power_z2 = basis_functions[nu].n;
+                    
+                    double coeff1 = basis_functions[mu].coeffs[k];
+                    double norm1 = basis_functions[mu].norm_coeff[k];
+                    
+                    double coeff2 = basis_functions[nu].coeffs[l];
+                    double norm2 = basis_functions[nu].norm_coeff[l];
+                    
+                    // Compute Gaussian product center
+                    double p = exp1 + exp2;
+                    double Px = (exp1 * x1 + exp2 * x2) / p;
+                    double Py = (exp1 * y1 + exp2 * y2) / p;
+                    double Pz = (exp1 * z1 + exp2 * z2) / p;
+                    
+                    // S_ab overlap using calc_overlap
+                    double S_ab = calc_overlap(x1, y1, z1, exp1, power_x1, power_y1, power_z1,
+                                              x2, y2, z2, exp2, power_x2, power_y2, power_z2);
+                    
+                    // Dipole x primitive: Px * S_ab
+                    double Dx_prim = Px * S_ab;
+                    // Dipole y primitive: Py * S_ab
+                    double Dy_prim = Py * S_ab;
+                    // Dipole z primitive: Pz * S_ab
+                    double Dz_prim = Pz * S_ab;
+                    
+                    // Contract with STO coefficients + normalization
+                    double prefactor = coeff1 * coeff2 * norm1 * norm2;
+                    sum_x += prefactor * Dx_prim;
+                    sum_y += prefactor * Dy_prim;
+                    sum_z += prefactor * Dz_prim;
+                }
+            }
+            
+            // Store into matrices
+            result.Dx(mu, nu) = sum_x;
+            result.Dy(mu, nu) = sum_y;
+            result.Dz(mu, nu) = sum_z;
+        }
+    }
 }
 
 
@@ -1041,6 +1129,22 @@ int main(int argc, char *argv[]) {
         cout << "HOMO-LUMO gap: " << band_gap_eV << " eV\n\n";
     }
     // === end HOMO/LUMO block ===
+
+    // dipole moment block! =====
+    // step 1: build dipole integrals
+    // declare the struct
+    DipoleIntegralResult dipole_result;
+
+    // use function with calc_overlap pass in 
+    build_dipole_integrals(basis_functions, num_basis, dipole_result, calc_overlap);
+
+    // Keeping this chunk here for debugging as needed!
+    cout << "Dipole X matrix:" << endl;
+    cout << dipole_result.Dx << endl;
+    cout << "Dipole Y matrix:" << endl;
+    cout << dipole_result.Dy << endl;
+    cout << "Dipole Z matrix:" << endl;
+    cout << dipole_result.Dz << endl; 
 
     // elec energy
     double electronic_energy_eV = 0;
