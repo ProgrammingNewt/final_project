@@ -942,6 +942,16 @@ int main(int argc, char *argv[]) {
     
 
     int num_basis = basis_functions.size();
+
+    // ---- DIPOLE EDIT -----
+    // build list of AO indices for each atom (used for per-atom loops)
+    std::vector<std::vector<int>> aos_on_atom(element_symbols.size());
+    for (int mu = 0; mu < num_basis; ++mu) {
+        int A = ao_to_atom[mu];
+        aos_on_atom[A].push_back(mu);
+    }
+    // ----------------------
+     
     mat gamma_matrix(element_symbols.size(), element_symbols.size());
 
     for (int a = 0; a < element_symbols.size(); a++) {
@@ -1234,7 +1244,7 @@ int main(int argc, char *argv[]) {
         std::vector<double> mu_elec_atom_z(element_symbols.size(), 0.0);
         for (size_t A = 0; A < element_symbols.size(); ++A) {
             for (int mu : aos_on_atom[A]) {
-                for (int nu = 0; nu < nb; ++nu) {
+                for (int nu = 0; nu < num_basis; ++nu) {
                     mu_elec_atom_x[A] += Ptot_final(mu, nu) * dipole_result.Dx(mu, nu);
                     mu_elec_atom_y[A] += Ptot_final(mu, nu) * dipole_result.Dy(mu, nu);
                     mu_elec_atom_z[A] += Ptot_final(mu, nu) * dipole_result.Dz(mu, nu);
