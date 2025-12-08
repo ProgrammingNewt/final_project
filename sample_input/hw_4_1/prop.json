@@ -1,6 +1,6 @@
 {
     "atoms_file_path"       : "atoms/prop.xyz",
     "output_file_path"      : "student_output/hw_4_1/prop.hdf5",
-    "num_alpha_electrons"   : 15,
-    "num_beta_electrons"    : 15
+    "num_alpha_electrons"   : 11,
+    "num_beta_electrons"    : 11
 }
