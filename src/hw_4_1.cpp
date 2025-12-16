@@ -40,6 +40,13 @@ struct Primitive {
     double d; //coeff for s
 };
 
+// adding a struct for the dipole integral results
+struct DipoleIntegralResult {
+    arma::mat Dx;
+    arma::mat Dy;
+    arma::mat Dz;
+};
+
 using BasisSet = std::vector<Primitive>;
 
 std::map<std::string, BasisSet> sto3g_s = {
@@ -506,6 +513,147 @@ mat make_core_hamiltonian(const mat& overlap_matrix, const std::vector<Basis_com
     return core_ham;
 }
 
+// hi hello ! big apologies in advance for all the long comments in the dipole math section
+// I just wanted to make sure I explained everything since this was a bit tricky to implement
+// and for my own sanity to make sure I understood the papers and textbooks I read while implementing this
+
+// the math for dipole integral is found in the Molecular Electronic-Structure Theory book by Helgaker et al
+// and they describe in chapter 9 how to compute multi-pole integrals from overlap integrals
+// using the obara-saika scheme for gaussian integrals to calculate reduced integrals
+
+// the difference between their multi-pole integral and the dipole is we define
+// e = 1 in the formula S^e_{i,j} = ∫ g_a(r) * (x - C_x)^e * (y - C_y)^f * (z - C_z)^g * g_b(r) dr
+// so if e = 0, that is the overlap, e = 1 is the dipole, and e = 2 is quadrupole, etc.
+
+// function to build dipole integrals
+// okay so bc calc_overlap is defined in main, I can't access it here as a function call so I have to pass it in as a lambda
+template<typename OverlapFunc>
+void build_dipole_integrals(const vector<Basis_components>& basis_functions, int num_basis, 
+                            DipoleIntegralResult& result, OverlapFunc calc_overlap) {
+    // Allocate Dx, Dy, Dz for the dipole integrals
+    result.Dx = mat(num_basis, num_basis, fill::zeros);
+    result.Dy = mat(num_basis, num_basis, fill::zeros);
+    result.Dz = mat(num_basis, num_basis, fill::zeros);
+
+    // Loop over mu, nu
+    for (int mu = 0; mu < num_basis; mu++){
+        for (int nu = 0; nu < num_basis; nu++) {
+
+            double sum_x = 0.0;
+            double sum_y = 0.0;
+            double sum_z = 0.0;
+
+            // For each primitive pair compute the overlap
+            for (int k = 0; k < 3; k++) {  // 3 primitives in STO-3G
+                for (int l = 0; l < 3; l++) {
+                    // Get primitive parameters
+                    double x1 = basis_functions[mu].center(0);
+                    double y1 = basis_functions[mu].center(1);
+                    double z1 = basis_functions[mu].center(2);
+
+                    double x2 = basis_functions[nu].center(0);
+                    double y2 = basis_functions[nu].center(1);
+                    double z2 = basis_functions[nu].center(2);
+
+                    double exp1 = basis_functions[mu].exponents[k];
+                    double exp2 = basis_functions[nu].exponents[l];
+
+                    int power_x1 = basis_functions[mu].l;
+                    int power_y1 = basis_functions[mu].m;
+                    int power_z1 = basis_functions[mu].n;
+
+                    int power_x2 = basis_functions[nu].l;
+                    int power_y2 = basis_functions[nu].m;
+                    int power_z2 = basis_functions[nu].n;
+
+                    double coeff1 = basis_functions[mu].coeffs[k];
+                    double norm1 = basis_functions[mu].norm_coeff[k];
+
+                    double coeff2 = basis_functions[nu].coeffs[l];
+                    double norm2 = basis_functions[nu].norm_coeff[l];
+
+                    // Compute Gaussian product center
+                    double p = exp1 + exp2;
+                    double Px = (exp1 * x1 + exp2 * x2) / p;
+                    double Py = (exp1 * y1 + exp2 * y2) / p;
+                    double Pz = (exp1 * z1 + exp2 * z2) / p;
+
+                    // S_ab overlap using calc_overlap
+                    // I would've liked to avoid doing this again but I need the primitive pairs for this calculation
+                    // And the overlap_matrix is already contracted, but that would happen at the end of this function
+                    // So I fear we shall be slightly inefficient to also avoid breaking HW4 code
+                    double S_ab = calc_overlap(x1, y1, z1, exp1, power_x1, power_y1, power_z1,
+                                              x2, y2, z2, exp2, power_x2, power_y2, power_z2);
+
+                    // Now compute the dipole integrals using the Obara-Saika relations
+                    // but without actually implementing recursion to do it, bc I think the paper of theirs that I keep finding
+                    // online did this recursively
+                    // Formula (x-component): <a|x|b> = Px * S_ab + 1/(2p) * [l_a * S_{a-1x,b} + l_b * S_{a,b-1x}]
+                    double Dx_prim = 0.0;
+                    double Dy_prim = 0.0;
+                    double Dz_prim = 0.0;
+
+                    double denom_p = p;
+                    // x-component
+                    double S_ax = 0.0; // overlap with a's x-power reduced by 1
+                    double S_bx = 0.0; // overlap with b's x-power reduced by 1
+
+                    // we only compute these reduced overlaps if the powers are greater than 0
+                    // otherwise we'd have negative powers which don't make sense
+                    // and from a correctness standpoint, an S-orbital would have no angular momentum to "reduce"
+                    // since the power would equal 0
+                    if (power_x1 > 0) {
+                        S_ax = calc_overlap(x1, y1, z1, exp1, power_x1 - 1, power_y1, power_z1,
+                                            x2, y2, z2, exp2, power_x2, power_y2, power_z2);
+                    }
+                    if (power_x2 > 0) {
+                        S_bx = calc_overlap(x1, y1, z1, exp1, power_x1, power_y1, power_z1,
+                                            x2, y2, z2, exp2, power_x2 - 1, power_y2, power_z2);
+                    }
+                    Dx_prim = Px * S_ab + ( (power_x1 * S_ax) + (power_x2 * S_bx) ) / (2.0 * denom_p);
+
+                    // y-component
+                    double S_ay = 0.0;
+                    double S_by = 0.0;
+                    if (power_y1 > 0) {
+                        S_ay = calc_overlap(x1, y1, z1, exp1, power_x1, power_y1 - 1, power_z1,
+                                            x2, y2, z2, exp2, power_x2, power_y2, power_z2);
+                    }
+                    if (power_y2 > 0) {
+                        S_by = calc_overlap(x1, y1, z1, exp1, power_x1, power_y1, power_z1,
+                                            x2, y2, z2, exp2, power_x2, power_y2 - 1, power_z2);
+                    }
+                    Dy_prim = Py * S_ab + ( (power_y1 * S_ay) + (power_y2 * S_by) ) / (2.0 * denom_p);
+
+                    // z-component
+                    double S_az = 0.0;
+                    double S_bz = 0.0;
+                    if (power_z1 > 0) {
+                        S_az = calc_overlap(x1, y1, z1, exp1, power_x1, power_y1, power_z1 - 1,
+                                            x2, y2, z2, exp2, power_x2, power_y2, power_z2);
+                    }
+                    if (power_z2 > 0) {
+                        S_bz = calc_overlap(x1, y1, z1, exp1, power_x1, power_y1, power_z1,
+                                            x2, y2, z2, exp2, power_x2, power_y2, power_z2 - 1);
+                    }
+                    Dz_prim = Pz * S_ab + ( (power_z1 * S_az) + (power_z2 * S_bz) ) / (2.0 * denom_p);
+
+                    // Contract with STO coefficients + normalization
+                    double prefactor = coeff1 * coeff2 * norm1 * norm2;
+                    sum_x += prefactor * Dx_prim;
+                    sum_y += prefactor * Dy_prim;
+                    sum_z += prefactor * Dz_prim;
+                }
+            }
+
+            // Store into matrices
+            result.Dx(mu, nu) = sum_x;
+            result.Dy(mu, nu) = sum_y;
+            result.Dz(mu, nu) = sum_z;
+        }
+    }
+}
+
 
 int main(int argc, char *argv[]) {
 
@@ -815,6 +963,16 @@ int main(int argc, char *argv[]) {
     
 
     int num_basis = basis_functions.size();
+
+    // DIPOLE EDIT ====
+    // build list of AO indices for each atom (used for per-atom loops later in the code
+    std::vector<std::vector<int>> aos_on_atom(element_symbols.size());
+    for (int mu = 0; mu < num_basis; ++mu) {
+        int A = ao_to_atom[mu];
+        aos_on_atom[A].push_back(mu);
+    }
+    // end edit ====
+     
     mat gamma_matrix(element_symbols.size(), element_symbols.size());
 
     for (int a = 0; a < element_symbols.size(); a++) {
@@ -1000,12 +1158,10 @@ int main(int argc, char *argv[]) {
     cout << "Cb" << endl;
     cout << final_Cb << endl;
 
-
-   cout << "\n Final MO energies (eV) \n";
+    cout << "\n Final MO energies (eV) \n";
 
     cout << "Alpha (Ea):\n";
-    cout << final_Ea.t();  //transpose so they print as a row
-
+    cout << final_Ea.t();  
     cout << "Beta  (Eb):\n";
     cout << final_Eb.t() << endl;
 
@@ -1040,8 +1196,131 @@ int main(int argc, char *argv[]) {
         cout << "Overall LUMO: " << lumo_E << " eV\n";
         cout << "HOMO-LUMO gap: " << band_gap_eV << " eV\n\n";
     }
-    // === end HOMO/LUMO block ===
 
+    // Compute molecular electric dipole (electronic + nuclear) in atomic units and report in Debye
+    // This block has several conceptual pieces:
+    //  1) Build AO dipole integrals (Dx, Dy, Dz) in the AO basis (most of the logic for this is in build_dipole_integral)
+    //  2) Build the final electronic density from the converged MOs 
+    //  3) Contract density with AO dipole integrals to get the electronic dipole
+    //  4) Build nuclear dipole (point charges at nuclear positions) and form total dipole
+
+    // But first, orthonormalize final MO coefficient matrices with respect to overlap_matrix S
+    // This produces final_Ca and final_Cb such that C^T * S * C = I 
+    // this is necessary because the AO basis is non orthogonal and
+    // building density matrices 
+    auto orthonormalize_mos = [&](const arma::mat &C_in, const arma::mat &S) -> arma::mat {
+        arma::mat M = C_in.t() * S * C_in;
+        arma::vec lam;
+        arma::mat U;
+        arma::eig_sym(lam, U, M);
+        const double tol = 1e-12;
+        for (arma::uword i = 0; i < lam.n_elem; ++i) {
+            if (lam(i) > tol) lam(i) = 1.0 / std::sqrt(lam(i));
+            else lam(i) = 0.0;
+        }
+        arma::mat M_inv_sqrt = U * arma::diagmat(lam) * U.t();
+        return C_in * M_inv_sqrt;
+    };
+
+    // replace final_Ca/final_Cb with their S-orthonormalized versions for use in our dipole calculation
+    // for this, we use overlap_matrix because these Ca and Cb were producted with contracted AOs
+    // and we need the corresponding overlap_matrix
+    final_Ca = orthonormalize_mos(final_Ca, overlap_matrix);
+    final_Cb = orthonormalize_mos(final_Cb, overlap_matrix);
+
+    // step 1: build dipole integrals in the AO basis (Dx, Dy, Dz)
+    DipoleIntegralResult dipole_result;
+    build_dipole_integrals(basis_functions, num_basis, dipole_result, calc_overlap);
+
+    // Print the AO dipole matrices (useful for debugging)
+    cout << "Dipole X matrix:" << endl;
+    cout << dipole_result.Dx << endl;
+    cout << "Dipole Y matrix:" << endl;
+    cout << dipole_result.Dy << endl;
+    cout << "Dipole Z matrix:" << endl;
+    cout << dipole_result.Dz << endl;
+
+    // P = sum_i c_i c_i^T (over occupied i) produces the correct density
+    // in the non-orthogonal AO basis when contracted with integrals
+    if (final_Ca.n_rows == overlap_matrix.n_rows && final_Cb.n_rows == overlap_matrix.n_rows) {
+        
+        // step 2: build electron densities from final MOs
+        // Build density matrices from final (orthonormal) MOs
+        // I can't use the old ones because the coefficients would vary since we orthonormalized
+        // P_alpha = sum_{i in occ_alpha} c_i c_i^T
+        // P_beta  = sum_{i in occ_beta } c_i c_i^T
+        mat Palpha_final = arma::zeros<mat>(final_Ca.n_rows, final_Ca.n_rows);
+        mat Pbeta_final  = arma::zeros<mat>(final_Cb.n_rows, final_Cb.n_rows);
+        for (int i = 0; i < num_alpha; ++i) {
+            Palpha_final += final_Ca.col(i) * final_Ca.col(i).t();
+        }
+        for (int i = 0; i < num_beta;  ++i) {
+            Pbeta_final  += final_Cb.col(i) * final_Cb.col(i).t();
+        }
+
+        mat Ptot_final = Palpha_final + Pbeta_final;
+        double Ne_final = arma::accu(Ptot_final % overlap_matrix);
+        cout << "Computed electron count from final C (Ne_final) = " << Ne_final << endl;
+
+        // deugging line:
+        cout << "Dipole matrix Dx size: " << dipole_result.Dx.n_rows << " × " << dipole_result.Dx.n_cols << endl;
+        cout << "Density matrix P size: " << Ptot_final.n_rows << " × " << Ptot_final.n_cols << endl;
+        cout << "They must match!" << endl; // okay they do yay
+
+        // Step 3: Contract densities for the per-atom electronic dipole contributions
+        // mu_elec_A = sum_{mu in A} sum_nu P_{mu,nu} D_{mu,nu}
+        // Compute each Cartesian component separately
+        std::vector<double> mu_elec_atom_x(element_symbols.size(), 0.0);
+        std::vector<double> mu_elec_atom_y(element_symbols.size(), 0.0);
+        std::vector<double> mu_elec_atom_z(element_symbols.size(), 0.0);
+        for (size_t A = 0; A < element_symbols.size(); ++A) {
+            for (int mu : aos_on_atom[A]) {
+                for (int nu = 0; nu < num_basis; ++nu) {
+
+                    // index into Ptot to find the contribution from AO mu (on atom A) and AO nu (on other atoms)
+                    // and then multiply by the dipole integral D_{mu,nu}
+                    mu_elec_atom_x[A] += Ptot_final(mu, nu) * dipole_result.Dx(mu, nu);
+                    mu_elec_atom_y[A] += Ptot_final(mu, nu) * dipole_result.Dy(mu, nu);
+                    mu_elec_atom_z[A] += Ptot_final(mu, nu) * dipole_result.Dz(mu, nu);
+                }
+            }
+        }
+
+        // Electronic dipole: trace(P * D)
+        double mu_elec_x = arma::accu(Ptot_final % dipole_result.Dx);
+        double mu_elec_y = arma::accu(Ptot_final % dipole_result.Dy);
+        double mu_elec_z = arma::accu(Ptot_final % dipole_result.Dz);
+
+        // check one of these
+        cout << "Check electronic dipole x-component by summing per-atom contributions: " << mu_elec_x << endl;
+
+        // Step 4: Compute nuclear dipole (use effective valence charges Zstar)
+        double mu_nuc_x = 0.0;
+        double mu_nuc_y = 0.0;
+        double mu_nuc_z = 0.0;
+        for (size_t A = 0; A < element_symbols.size(); ++A) {
+            double ZA_eff = static_cast<double>(cndo_parameters[element_symbols[A]].Zstar);
+            mu_nuc_x += ZA_eff * atom_positions[A](0);
+            mu_nuc_y += ZA_eff * atom_positions[A](1);
+            mu_nuc_z += ZA_eff * atom_positions[A](2);
+        }
+
+        // Total dipole: nuclear - electronic (atomic units)
+        double mu_x = mu_nuc_x - mu_elec_x;
+        double mu_y = mu_nuc_y - mu_elec_y;
+        double mu_z = mu_nuc_z - mu_elec_z;
+        double mu_mag = std::sqrt(mu_x*mu_x + mu_y*mu_y + mu_z*mu_z);
+        const double AU_TO_DEBYE = 2.541746;
+        double mu_debye = mu_mag * AU_TO_DEBYE;
+
+        cout << fixed << setprecision(6);
+        cout << "Electronic dipole (au): (" << mu_elec_x << ", " << mu_elec_y << ", " << mu_elec_z << ")" << endl;
+        cout << "Nuclear dipole   (au): (" << mu_nuc_x << ", " << mu_nuc_y << ", " << mu_nuc_z << ")" << endl;
+        cout << "Total dipole     (au): (" << mu_x << ", " << mu_y << ", " << mu_z << ")" << endl;
+        cout << "Dipole magnitude: " << mu_mag << " au  = " << mu_debye << " Debye" << endl;      
+    }
+    // end dipole moment block =====
+    
     // elec energy
     double electronic_energy_eV = 0;
     for (int mu = 0; mu < num_basis; mu++) {
